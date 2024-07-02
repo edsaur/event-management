@@ -4,20 +4,31 @@ namespace App\Http\Controllers\Api;
 
 use App\Models\Event;
 use Illuminate\Http\Request;
-use App\Http\Controllers\Controller;
-use App\Http\Resources\EventResource;
 use PHPUnit\Event\EventCollection;
+use App\Http\Controllers\Controller;
+use Illuminate\Support\Facades\Gate;
+use App\Http\Resources\EventResource;
+use App\http\traits\CanLoadRelationships;
 
 class EventController extends Controller
 {
+
+    use CanLoadRelationships;
     /**
      * Display a listing of the resource.
      */
 
+    private array $relations = ['user', 'attendees', 'attendees.user'];
+
+    public function __construct()
+    {
+        $this->middleware('auth:sanctum')->except(['index', 'show']);
+    }
+
     public function index()
     {
-        $this->shouldIncludeRelation('user');
-        return EventResource::collection(Event::with('user')->paginate(10));
+        $query = $this->loadRelationship(Event::query());
+        return EventResource::collection($query->latest()->paginate(10));
     }
 
     protected function shouldIncludeRelation(string $relation) : bool 
@@ -29,7 +40,7 @@ class EventController extends Controller
         }
 
         $relations = array_map('trim', explode(',', $include));
-        dd($relations);
+        return in_array($relation, $relations);
     }
 
     /**
@@ -44,9 +55,9 @@ class EventController extends Controller
                 'start_time' => 'required|date',
                 'end_time' => 'required|date|after:start_time'
             ]),
-            'user_id' => 1
+            'user_id' => $request->user()->id
         ]);   
-        return new EventResource($event);
+        return new EventResource($this->loadRelationship($event));
     }
 
     /**
@@ -55,7 +66,7 @@ class EventController extends Controller
     public function show(Event $event)
     {
         $event->load('user', 'attendees');
-        return new EventResource($event);
+        return new EventResource($this->loadRelationship($event));
     }
 
     /**
@@ -63,13 +74,19 @@ class EventController extends Controller
      */
     public function update(Request $request, Event $event)
     {
+
+        if (Gate::denies('update-event', $event)){
+            abort(403, "You are not authorized to edit this!");
+        }
+
+        $this->authorize('update-event', $event);
         $event->update($request->validate([
                 'name' => 'sometimes|string|max:255',
                 'description' => 'nullable|string',
                 'start_time' => 'sometimes|date',
                 'end_time' => 'sometimes|date|after:start_time'
             ]));
-            return new EventResource($event);
+            return new EventResource($this->loadRelationship($event));
     }
 
     /**
